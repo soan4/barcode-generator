@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>EAN-13 バーコード生成</title>
+    <link rel="icon" href="barcode-icon.png">
+    <link rel="apple-touch-icon" href="barcode-icon.png">
+    <meta name="theme-color" content="#477799">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 16px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #333;
+        }
+        .input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 1rem;
+        }
+        input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        button:disabled {
+            background: #ccc;
+        }
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+        .barcode-container {
+            background: white;
+            padding: 16px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .save-instruction {
+            text-align: center;
+            color: #666;
+            margin-top: 12px;
+            font-size: 14px;
+        }
+        .barcode-number {
+            text-align: center;
+            color: #666;
+            margin-top: 8px;
+            font-size: 12px;
+        }
+        svg {
+            width: 100%;
+            background: white;
+            touch-action: manipulation;
+            -webkit-touch-callout: default;
+        }
+    </style>
+
+    <link rel="manifest" href="manifest.json">
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('service-worker.js')
+          .then(reg => console.log('Service Worker registered'))
+          .catch(err => console.log('Service Worker not registered', err));
+  }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>EAN-13 バーコード生成</h1>
+        
+        <div class="input-group">
+            <input type="text" id="barcodeInput" placeholder="13桁の数字を入力" maxlength="13" inputmode="numeric">
+            <button id="autoComplete">自動補完</button>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="barcodeOutput" class="barcode-container" style="display: none;">
+            <div id="barcodeSvg"></div>
+            <div class="save-instruction">
+                ↑ バーコードを長押しして保存
+            </div>
+            <div id="barcodeNumber" class="barcode-number"></div>
+        </div>
+    </div>
+
+    <script>
+        const patterns = {
+            L: [
+                '0001101', '0011001', '0010011', '0111101',
+                '0100011', '0110001', '0101111', '0111011',
+                '0110111', '0001011'
+            ],
+            G: [
+                '0100111', '0110011', '0011011', '0100001',
+                '0011101', '0111001', '0000101', '0010001',
+                '0001001', '0010111'
+            ],
+            R: [
+                '1110010', '1100110', '1101100', '1000010',
+                '1011100', '1001110', '1010000', '1000100',
+                '1001000', '1110100'
+            ]
+        };
+
+        const firstDigitPattern = [
+            'LLLLLL', 'LLGLGG', 'LLGGLG', 'LLGGGL',
+            'LGLLGG', 'LGGLLG', 'LGGGLL', 'LGLGLG',
+            'LGLGGL', 'LGGLGL'
+        ];
+
+        function calculateCheckDigit(digits) {
+            let sum = 0;
+            for (let i = 0; i < 12; i++) {
+                sum += parseInt(digits[i]) * (i % 2 === 0 ? 1 : 3);
+            }
+            return ((10 - (sum % 10)) % 10).toString();
+        }
+
+        function generateBarcode(num) {
+            if (!/^\d{13}$/.test(num)) return null;
+            
+            const checkDigit = calculateCheckDigit(num.slice(0, 12));
+            if (checkDigit !== num[12]) return null;
+
+            const firstDigit = parseInt(num[0]);
+            const pattern = firstDigitPattern[firstDigit];
+            let barcode = '101'; // 開始マーカー
+
+            // 前半6桁
+            for (let i = 1; i < 7; i++) {
+                const digit = parseInt(num[i]);
+                const encoding = pattern[i - 1] === 'L' ? patterns.L : patterns.G;
+                barcode += encoding[digit];
+            }
+
+            barcode += '01010'; // 中央マーカー
+
+            // 後半6桁
+            for (let i = 7; i < 13; i++) {
+                barcode += patterns.R[parseInt(num[i])];
+            }
+
+            barcode += '101'; // 終了マーカー
+            return barcode;
+        }
+
+        function updateBarcode() {
+            const input = document.getElementById('barcodeInput');
+            const error = document.getElementById('error');
+            const output = document.getElementById('barcodeOutput');
+            const number = input.value;
+
+            error.style.display = 'none';
+            output.style.display = 'none';
+
+            if (number.length === 13) {
+                const barcode = generateBarcode(number);
+                if (barcode) {
+                    // バーコードを表示
+                    const svg = `
+                        <svg viewBox="0 0 200 100">
+                            <rect width="200" height="100" fill="white"/>
+                            ${barcode.split('').map((bit, i) => 
+                                bit === '1' ? 
+                                `<rect x="${i * (200 / barcode.length)}" y="10" 
+                                    width="${200 / barcode.length}" height="60" fill="black"/>` : 
+                                ''
+                            ).join('')}
+                            <text x="5" y="85" font-size="8">${number[0]}</text>
+                            <text x="25" y="85" font-size="8">${number.slice(1, 7)}</text>
+                            <text x="115" y="85" font-size="8">${number.slice(7)}</text>
+                        </svg>
+                    `;
+                    document.getElementById('barcodeSvg').innerHTML = svg;
+                    document.getElementById('barcodeNumber').textContent = number;
+                    output.style.display = 'block';
+                } else {
+                    error.textContent = '無効なバーコード番号です';
+                    error.style.display = 'block';
+                }
+            }
+        }
+
+        function handleInput(e) {
+            const value = e.target.value.replace(/[^\d]/g, '').slice(0, 13);
+            e.target.value = value;
+            updateBarcode();
+            document.getElementById('autoComplete').disabled = value.length >= 13;
+        }
+
+        function handleAutoComplete() {
+            const input = document.getElementById('barcodeInput');
+            const num = input.value.padStart(12, '0');
+            input.value = num + calculateCheckDigit(num);
+            updateBarcode();
+            document.getElementById('autoComplete').disabled = true;
+        }
+
+        // イベントリスナーの設定
+        document.getElementById('barcodeInput').addEventListener('input', handleInput);
+        document.getElementById('autoComplete').addEventListener('click', handleAutoComplete);
+    </script>
+</body>
+</html>
